@@ -285,6 +285,7 @@ install_zoxide() {
   log "Installed zoxide."
   ~/.local/bin/zoxide init --cmd cd bash
   append_bashrc 'eval "$(zoxide init bash)"'
+  add_alias cd z
 }
 
 install_essentials() {
@@ -336,6 +337,11 @@ install_fd() {
   log "Installed 'fd'."
 }
 
+install_starship() {
+  curl -sS https://starship.rs/install.sh | sh -s -- -y
+  append_bashrc 'eval "$(starship init bash)"'
+}
+
 add_misc_to_bashrc() {
   add_alias s "git status"
   add_alias b "git branch"
@@ -377,6 +383,7 @@ Options:
     --rg        Install ripgrep for faster grep experience.
     --eza       Install eza for more powerful ls capabilities.
     --fd        Install fd for faster find.
+    --starship  Install starship for custom user prompts.
     -h, --help  Show this help.
 EOF
 }
@@ -391,7 +398,7 @@ run() {
 }
 
 main() {
-  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0 do_rg=0 do_eza=0 do_fd=0
+  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0 do_rg=0 do_eza=0 do_fd=0 do_starship=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -403,6 +410,7 @@ main() {
     --rg) do_rg=1 ;;
     --eza) do_eza=1 ;;
     --fd) do_fd=1 ;;
+    --starship) do_starship=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h | --help)
       usage
@@ -446,6 +454,10 @@ main() {
 
   if [ "$do_all" -eq 1 ] || [ "$do_fd" -eq 1 ]; then
     run install_fd
+  fi
+
+  if [ "$do_all" -eq 1 ] || [ "$do_starship" -eq 1 ]; then
+    run install_starship
   fi
 
   run add_misc_to_bashrc
