@@ -242,6 +242,27 @@ install_zoxide() {
   append_bashrc 'eval "$(zoxide init bash)"'
 }
 
+install_essentials() {
+  case "$DISTRO" in
+  arch) $sudo pacman -S --needed --noconfirm base-devel ;;
+  ubuntu) $SUDO apt-get update -y && sudo apt install -y build-essential ;;
+  *) warn "Skipping pkg update (unknown distro)" ;;
+  esac
+}
+
+install_rust() {
+  install_essentials
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+}
+
+install_ripgrep() {
+  install_rust
+  git clone https://github.com/BurntSushi/ripgrep ~/.rg
+  cd ~/.rg && . "$HOME/.cargo/env" && cargo build --release
+  path_installation=${HOME}/.rg/target/release/
+  append_bashrc "export PATH=\"\$PATH:${path_installation}\""
+}
+
 add_misc_to_bashrc() {
   add_alias s "git status"
   add_alias b "git branch"
@@ -280,6 +301,7 @@ Options:
     --lazyvim   Install LazyVim (backups current neovim config files, before setting up lazyvim).
     --fzf       Install fzf (fuzzy find for files).
     --zoxide    Replace cd with zoxide, which remembers visited paths.
+    --rg        Install ripgrep for faster grep experience.
     -h, --help  Show this help.
 EOF
 }
@@ -294,7 +316,7 @@ run() {
 }
 
 main() {
-  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0
+  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0 do_rg=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -303,6 +325,7 @@ main() {
     --lazyvim) do_lazyvim=1 ;;
     --fzf) do_fzf=1 ;;
     --zoxide) do_zoxide=1 ;;
+    --rg) do_rg=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h | --help)
       usage
@@ -334,6 +357,10 @@ main() {
 
   if [ "$do_all" -eq 1 ] || [ "$do_zoxide" -eq 1 ]; then
     run install_zoxide
+  fi
+
+  if [ "$do_all" -eq 1 ] || [ "$do_rg" -eq 1 ]; then
+    run install_ripgrep
   fi
 
   run add_misc_to_bashrc
