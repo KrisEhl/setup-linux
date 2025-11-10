@@ -69,8 +69,31 @@ add_alias() {
   fi
 
   # If no alias exists yet, append it
-  log "alias $name=\"$value\"" >>"$file"
+  echo "alias $name=\"$value\"" >>"$file"
   log "Added alias $name → \"$value\""
+}
+
+add_function() {
+  local func_name="$1"
+  local file="$HOME/.bashrc"
+
+  # If function already exists, skip
+  if grep -Eq "^${func_name}\s*\(\)" "$file"; then
+    echo "Function '$func_name' already exists in .bashrc"
+    return 0
+  fi
+
+  echo "Adding function '$func_name' to .bashrc"
+
+  {
+    echo ""
+    echo "# --- Added by setup script ---"
+    echo "${func_name}() {"
+    shift
+    printf '  %s\n' "$@"
+    echo "}"
+    echo "# --- End of $func_name ---"
+  } >>"$file"
 }
 
 ensure_basics() {
@@ -117,7 +140,7 @@ append_bashrc() {
   fi
 
   # Append the line
-  log "$line" >>"$file"
+  echo "$line" >>"$file"
   log "Added line to .bashrc:"
   log "  $line"
 }
@@ -144,6 +167,9 @@ install_neovim_tar() {
 
   log "Extracting to /opt..."
   $SUDO tar -C /opt -xzf "$tarball"
+
+  log "Remove now redundant tarball."
+  rm "$tarball"
 
   if [ ! -x "$target" ]; then
     err "nvim binary not found at $target after extract"
@@ -198,9 +224,36 @@ install_lazyvim() {
 }
 
 install_fzf() {
+  if [ -d "${HOME}/.fzf" ]; then
+    warn "fzf already installed. Remove ~/.fzf to re-install!"
+    return 0
+  fi
   git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf
   ~/.fzf/install
   log "Installed fzf."
+}
+
+add_misc_to_bashrc() {
+  add_alias s "git status"
+  add_alias b "git branch"
+  add_alias d "git diff"
+  add_function add_alias \
+    'if [ "$#" -lt 2 ]; then' \
+    '  echo "Usage: add_alias <name> <value>"' \
+    '  return 1' \
+    'fi' \
+    'local name="$1"' \
+    'local value="$2"' \
+    'local file="$HOME/.bashrc"' \
+    '' \
+    '# Check if alias already exists' \
+    'if grep -Fxq "alias $name=\"$value\"" "$file"; then' \
+    '  echo "Alias $name already exists"' \
+    '  return 0' \
+    'fi' \
+    '' \
+    'echo "alias $name=\"$value\"" >> "$file"' \
+    'echo "Added alias $name"'
 }
 
 # =========================
@@ -267,6 +320,8 @@ main() {
   if [ "$do_all" -eq 1 ] || [ "$do_fzf" -eq 1 ]; then
     run install_fzf
   fi
+
+  run add_misc_to_bashrc
 
   log 'Open a new terminal (or exec "$SHELL") to make sure setup complete!'
   log "Done."
