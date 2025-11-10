@@ -96,7 +96,7 @@ add_function() {
   } >>"$file"
 }
 
-ensure_basics() {
+ensure_basics_neovim() {
   local needed_pkgs=()
   need curl || needed_pkgs+=("curl")
   need tar || needed_pkgs+=("tar")
@@ -157,7 +157,7 @@ install_neovim_tar() {
   local target="$bin_dir/nvim"
   local symlink="/usr/local/bin/nvim"
 
-  ensure_basics
+  ensure_basics_neovim
 
   log "Downloading Neovim tarball..."
   curl -L -o "$tarball" "$url"
@@ -233,6 +233,15 @@ install_fzf() {
   log "Installed fzf."
 }
 
+install_zoxide() {
+  # https://github.com/ajeetdsouza/zoxide?tab=readme-ov-file#installation
+  append_bashrc 'export PATH=$PATH:/home/kristian/.local/bin'
+  curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
+  log "Installed zoxide."
+  ~/.local/bin/zoxide init --cmd cd bash
+  append_bashrc 'eval "$(zoxide init bash)"'
+}
+
 add_misc_to_bashrc() {
   add_alias s "git status"
   add_alias b "git branch"
@@ -270,7 +279,8 @@ Options:
     --neovim    Install Neovim (from tarball into /opt, create /usr/local/bin symlink).
     --lazyvim   Install LazyVim (backups current neovim config files, before setting up lazyvim).
     --fzf       Install fzf (fuzzy find for files).
-  -h, --help  Show this help.
+    --zoxide    Replace cd with zoxide, which remembers visited paths.
+    -h, --help  Show this help.
 EOF
 }
 
@@ -284,7 +294,7 @@ run() {
 }
 
 main() {
-  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0
+  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -292,6 +302,7 @@ main() {
     --neovim) do_neovim=1 ;;
     --lazyvim) do_lazyvim=1 ;;
     --fzf) do_fzf=1 ;;
+    --zoxide) do_zoxide=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h | --help)
       usage
@@ -319,6 +330,10 @@ main() {
 
   if [ "$do_all" -eq 1 ] || [ "$do_fzf" -eq 1 ]; then
     run install_fzf
+  fi
+
+  if [ "$do_all" -eq 1 ] || [ "$do_zoxide" -eq 1 ]; then
+    run install_zoxide
   fi
 
   run add_misc_to_bashrc
