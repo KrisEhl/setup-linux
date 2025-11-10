@@ -428,37 +428,23 @@ main() {
   log "Detected distro: $DISTRO"
   trap 'err "Script failed at line $LINENO"; exit 1' ERR
 
-  if [ "$do_all" -eq 1 ] || [ "$do_neovim" -eq 1 ]; then
-    run install_neovim_tar
-  fi
+  declare -A FEATURES=(
+    [neovim]=install_neovim_tar
+    [lazyvim]=install_lazyvim
+    [fzf]=install_fzf
+    [zoxide]=install_zoxide
+    [rg]=install_ripgrep
+    [eza]=install_eza
+    [fd]=install_fd
+    [starship]=install_starship
+  )
 
-  if [ "$do_all" -eq 1 ] || [ "$do_lazyvim" -eq 1 ]; then
-    run install_lazyvim
-  fi
-
-  if [ "$do_all" -eq 1 ] || [ "$do_fzf" -eq 1 ]; then
-    run install_fzf
-  fi
-
-  if [ "$do_all" -eq 1 ] || [ "$do_zoxide" -eq 1 ]; then
-    run install_zoxide
-  fi
-
-  if [ "$do_all" -eq 1 ] || [ "$do_rg" -eq 1 ]; then
-    run install_ripgrep
-  fi
-
-  if [ "$do_all" -eq 1 ] || [ "$do_eza" -eq 1 ]; then
-    run install_eza
-  fi
-
-  if [ "$do_all" -eq 1 ] || [ "$do_fd" -eq 1 ]; then
-    run install_fd
-  fi
-
-  if [ "$do_all" -eq 1 ] || [ "$do_starship" -eq 1 ]; then
-    run install_starship
-  fi
+  for key in "${!FEATURES[@]}"; do
+    var="do_${key}"
+    if [ "$do_all" -eq 1 ] || [ "${!var}" -eq 1 ]; then
+      run "${FEATURES[$key]}"
+    fi
+  done
 
   run add_misc_to_bashrc
 
