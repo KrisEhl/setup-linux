@@ -13,7 +13,7 @@ SUDO="sudo"
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; fi
 
 # =========================
-# Distro detection
+# General Utility
 # =========================
 detect_distro() {
   if [ -r /etc/os-release ]; then
@@ -33,9 +33,6 @@ if [ "$DISTRO" = "unknown" ]; then
   warn "Unknown distro. Script supports Arch and Ubuntu-like. Continuing may fail."
 fi
 
-# =========================
-# Package manager helpers
-# =========================
 pkg_update() {
   case "$DISTRO" in
   arch) $SUDO pacman -Sy --noconfirm ;;
@@ -79,11 +76,11 @@ add_function() {
 
   # If function already exists, skip
   if grep -Eq "^${func_name}\s*\(\)" "$file"; then
-    echo "Function '$func_name' already exists in .bashrc"
+    log "Function '$func_name' already exists in .bashrc"
     return 0
   fi
 
-  echo "Adding function '$func_name' to .bashrc"
+  log "Adding function '$func_name' to .bashrc"
 
   {
     echo ""
@@ -96,14 +93,54 @@ add_function() {
   } >>"$file"
 }
 
-ensure_basics_neovim() {
-  local needed_pkgs=()
-  need curl || needed_pkgs+=("curl")
-  need tar || needed_pkgs+=("tar")
-  if [ "${#needed_pkgs[@]}" -gt 0 ]; then
-    log "Installing prerequisites: ${needed_pkgs[*]}"
-    pkg_update
-    pkg_install "${needed_pkgs[@]}"
+# git_sync_repo <repo_url> <target_dir> [branch]
+git_sync_repo() {
+  local repo_url="$1"
+  local target_dir="$2"
+  local branch="${3:-}"
+
+  if [ -z "${repo_url-}" ] || [ -z "${target_dir-}" ]; then
+    log "Usage: git_sync_repo <repo_url> <target_dir> [branch]" >&2
+    return 2
+  fi
+
+  # CASE 1: target does not exist -> clone
+  if [ ! -d "$target_dir" ]; then
+    if [ -n "$branch" ]; then
+      git clone -b "$branch" --single-branch "$repo_url" "$target_dir"
+    else
+      git clone "$repo_url" "$target_dir"
+    fi
+    return
+  fi
+
+  # CASE 2: target exists but is not a git repo
+  if [ ! -d "$target_dir/.git" ]; then
+    warn "Target exists but is not a git repo: $target_dir" >&2
+    return 1
+  fi
+
+  # CASE 3: target is a git repo -> verify remote and update
+  local current_remote
+  current_remote="$(git -C "$target_dir" config --get remote.origin.url || true)"
+
+  if [ "$current_remote" != "$repo_url" ]; then
+    warn "Remote URL mismatch in $target_dir" >&2
+    warn "  expected: $repo_url" >&2
+    warn "  found:    $current_remote" >&2
+    return 1
+  fi
+
+  # Fetch and update
+  git -C "$target_dir" fetch --all --prune
+
+  if [ -n "$branch" ]; then
+    # ensure we are on the desired branch, then hard-reset to origin/<branch>
+    git -C "$target_dir" checkout "$branch"
+    git -C "$target_dir" reset --hard "origin/$branch"
+  else
+    # no branch specified: fast-forward current branch
+    git -C "$target_dir" pull --ff-only
   fi
 }
 
@@ -145,11 +182,19 @@ append_bashrc() {
   log "  $line"
 }
 
-# =========================
-# Neovim install (tarball)
-# https://github.com/neovim/neovim/blob/master/INSTALL.md#pre-built-archives-2
-# =========================
+ensure_basics_neovim() {
+  local needed_pkgs=()
+  need curl || needed_pkgs+=("curl")
+  need tar || needed_pkgs+=("tar")
+  if [ "${#needed_pkgs[@]}" -gt 0 ]; then
+    log "Installing prerequisites: ${needed_pkgs[*]}"
+    pkg_update
+    pkg_install "${needed_pkgs[@]}"
+  fi
+}
+
 install_neovim_tar() {
+  # https://github.com/neovim/neovim/blob/master/INSTALL.md#pre-built-archives-2
   local url="https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz"
   local tarball="/tmp/nvim-linux-x86_64.tar.gz"
   local opt_dir="/opt/nvim-linux-x86_64"
@@ -219,7 +264,7 @@ install_lazyvim() {
   backup ~/.local/state/nvim
   backup ~/.cache/nvim
   log "Setting up LazyVim configs."
-  git clone https://github.com/LazyVim/starter ~/.config/nvim
+  git_sync_repo https://github.com/LazyVim/starter ~/.config/nvim
   rm -rf ~/.config/nvim/.git
 }
 
@@ -228,7 +273,7 @@ install_fzf() {
     warn "fzf already installed. Remove ~/.fzf to re-install!"
     return 0
   fi
-  git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf
+  git_sync_repo https://github.com/junegunn/fzf.git ~/.fzf
   ~/.fzf/install
   log "Installed fzf."
 }
@@ -251,16 +296,38 @@ install_essentials() {
 }
 
 install_rust() {
+  if need cargo; then
+    log "Cargo rust already installed!"
+    return 0
+  fi
+
   install_essentials
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 }
 
 install_ripgrep() {
   install_rust
-  git clone https://github.com/BurntSushi/ripgrep ~/.rg
+  git_sync_repo https://github.com/BurntSushi/ripgrep ~/.rg
   cd ~/.rg && . "$HOME/.cargo/env" && cargo build --release
   path_installation=${HOME}/.rg/target/release/
   append_bashrc "export PATH=\"\$PATH:${path_installation}\""
+  log "Installed ripgrep ('rg')."
+}
+
+install_eza_theme() {
+  git_sync_repo https://github.com/eza-community/eza-themes.git ~/.eza-themes
+  mkdir -p ~/.config/eza
+  ln -sf "${HOME}/.eza-themes/themes/frosty.yml" ~/.config/eza/theme.yml
+}
+
+install_eza() {
+  install_rust
+  cargo install eza
+  add_alias ls 'eza -lh --group-directories-first --icons=auto'
+  add_alias lt 'eza --tree --level=2 --long --icons --git'
+  log "Installed eza (try 'ls', 'lt')."
+  install_eza_theme
+  log "Installed eza theme."
 }
 
 add_misc_to_bashrc() {
@@ -302,6 +369,7 @@ Options:
     --fzf       Install fzf (fuzzy find for files).
     --zoxide    Replace cd with zoxide, which remembers visited paths.
     --rg        Install ripgrep for faster grep experience.
+    --eza       Install eza for more powerful ls capabilities.
     -h, --help  Show this help.
 EOF
 }
@@ -316,7 +384,7 @@ run() {
 }
 
 main() {
-  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0 do_rg=0
+  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0 do_rg=0 do_eza=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -326,6 +394,7 @@ main() {
     --fzf) do_fzf=1 ;;
     --zoxide) do_zoxide=1 ;;
     --rg) do_rg=1 ;;
+    --eza) do_eza=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h | --help)
       usage
@@ -361,6 +430,10 @@ main() {
 
   if [ "$do_all" -eq 1 ] || [ "$do_rg" -eq 1 ]; then
     run install_ripgrep
+  fi
+
+  if [ "$do_all" -eq 1 ] || [ "$do_eza" -eq 1 ]; then
+    run install_eza
   fi
 
   run add_misc_to_bashrc
