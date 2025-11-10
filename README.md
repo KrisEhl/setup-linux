@@ -10,3 +10,10 @@ bash setup.sh --all
 ```
 
 Idea is to add/remove apps when they make sense for my setup.
+
+## Next
+Add support for
+- pipx
+- pyenv
+- python3.12, python3.13, python3.14?
+- kaggle CLI tool
