@@ -330,6 +330,12 @@ install_eza() {
   log "Installed eza theme."
 }
 
+install_fd() {
+  install_rust
+  cargo install fd-find
+  log "Installed 'fd'."
+}
+
 add_misc_to_bashrc() {
   add_alias s "git status"
   add_alias b "git branch"
@@ -370,6 +376,7 @@ Options:
     --zoxide    Replace cd with zoxide, which remembers visited paths.
     --rg        Install ripgrep for faster grep experience.
     --eza       Install eza for more powerful ls capabilities.
+    --fd        Install fd for faster find.
     -h, --help  Show this help.
 EOF
 }
@@ -384,7 +391,7 @@ run() {
 }
 
 main() {
-  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0 do_rg=0 do_eza=0
+  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0 do_rg=0 do_eza=0 do_fd=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -395,6 +402,7 @@ main() {
     --zoxide) do_zoxide=1 ;;
     --rg) do_rg=1 ;;
     --eza) do_eza=1 ;;
+    --fd) do_fd=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h | --help)
       usage
@@ -434,6 +442,10 @@ main() {
 
   if [ "$do_all" -eq 1 ] || [ "$do_eza" -eq 1 ]; then
     run install_eza
+  fi
+
+  if [ "$do_all" -eq 1 ] || [ "$do_fd" -eq 1 ]; then
+    run install_fd
   fi
 
   run add_misc_to_bashrc
