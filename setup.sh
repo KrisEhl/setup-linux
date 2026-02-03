@@ -1,4 +1,4 @@
-#!/usr/bin/en
+#!/usr/bin/env /opt/homebrew/bin/bash
 set -euo pipefail
 
 # =========================
@@ -153,7 +153,7 @@ backup() {
 
   if [ ! -e "$src" ]; then
     log "File not found, skipping: $src"
-    return 1
+    return 0
   fi
 
   local ts
@@ -198,10 +198,16 @@ ensure_basics_neovim() {
 }
 
 install_neovim_tar() {
-  # https://github.com/neovim/neovim/blob/master/INSTALL.md#pre-built-archives-2
-  local url="https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz"
-  local tarball="/tmp/nvim-linux-x86_64.tar.gz"
-  local opt_dir="/opt/nvim-linux-x86_64"
+  if [ "$DISTRO" = "macos" ]; then
+    local url="https://github.com/neovim/neovim/releases/download/nightly/nvim-macos-arm64.tar.gz"
+    local tarball="/tmp/nvim-macos-arm64.tar.gz"
+    local opt_dir="/opt/nvim-macos-arm64"
+  else
+    # https://github.com/neovim/neovim/blob/master/INSTALL.md#pre-built-archives-2
+    local url="https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz"
+    local tarball="/tmp/nvim-linux-x86_64.tar.gz"
+    local opt_dir="/opt/nvim-linux-x86_64"
+  fi
   local bin_dir="$opt_dir/bin"
   local target="$bin_dir/nvim"
   local symlink="/usr/local/bin/nvim"
@@ -434,21 +440,24 @@ main() {
   trap 'err "Script failed at line $LINENO"; exit 1' ERR
 
   declare -A FEATURES=(
-    [neovim]=install_neovim_tar
-    [lazyvim]=install_lazyvim
-    [fzf]=install_fzf
-    [zoxide]=install_zoxide
-    [rg]=install_ripgrep
-    [eza]=install_eza
-    [fd]=install_fd
-    [starship]=install_starship
+    ["neovim"]="install_neovim_tar"
+    ["lazyvim"]="install_lazyvim"
+    ["fzf"]="install_fzf"
+    ["zoxide"]="install_zoxide"
+    ["rg"]="install_ripgrep"
+    ["eza"]="install_eza"
+    ["fd"]="install_fd"
+    ["starship"]="install_starship"
   )
 
   for key in "${!FEATURES[@]}"; do
-    var="do_${key}"
-    if [ "$do_all" -eq 1 ] || [ "${!var}" -eq 1 ]; then
-      run "${FEATURES[$key]}"
-    fi
+      log "Checking feature: $key"
+      var="do_${key}"
+      log "do_all: $do_all, ${!var}: ${!var}"
+      if [ "$do_all" -eq 1 ] || [ "${!var}" -eq 1 ]; then
+          log "Running feature: ${FEATURES[$key]}"
+          run "${FEATURES[$key]}"
+      fi
   done
 
   run add_misc_to_bashrc
