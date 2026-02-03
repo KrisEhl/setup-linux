@@ -23,6 +23,8 @@ detect_distro() {
     ubuntu | debian | pop | linuxmint) echo "ubuntu" ;; # treat Debian-likes as ubuntu path
     *) echo "unknown" ;;
     esac
+  elif [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "macos"
   else
     echo "unknown"
   fi
@@ -37,6 +39,7 @@ pkg_update() {
   case "$DISTRO" in
   arch) $SUDO pacman -Sy --noconfirm ;;
   ubuntu) $SUDO apt-get update -y ;;
+  macos) brew update ;;
   *) warn "Skipping pkg update (unknown distro)" ;;
   esac
 }
@@ -46,6 +49,7 @@ pkg_install() {
   case "$DISTRO" in
   arch) $SUDO pacman -S --needed --noconfirm "${pkgs[@]}" ;;
   ubuntu) $SUDO apt-get install -y "${pkgs[@]}" ;;
+  macos) brew install "${pkgs[@]}" ;;
   *) warn "Cannot install packages on unknown distro: ${pkgs[*]}" ;;
   esac
 }
@@ -292,6 +296,7 @@ install_essentials() {
   case "$DISTRO" in
   arch) $sudo pacman -S --needed --noconfirm base-devel ;;
   ubuntu) $SUDO apt-get update -y && sudo apt install -y build-essential ;;
+  macos) pkg_install gcc make ;;
   *) warn "Skipping pkg update (unknown distro)" ;;
   esac
 }
