@@ -353,6 +353,10 @@ install_starship() {
   append_bashrc 'eval "$(starship init bash)"'
 }
 
+install_uv() {
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+}
+
 add_misc_to_bashrc() {
   add_alias s "git status"
   add_alias b "git branch"
@@ -395,6 +399,7 @@ Options:
     --eza       Install eza for more powerful ls capabilities.
     --fd        Install fd for faster find.
     --starship  Install starship for custom user prompts.
+    --uv        Install uv to manage python environments.
     -h, --help  Show this help.
 EOF
 }
@@ -409,7 +414,7 @@ run() {
 }
 
 main() {
-  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0 do_rg=0 do_eza=0 do_fd=0 do_starship=0
+  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0 do_rg=0 do_eza=0 do_fd=0 do_starship=0 do_uv=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -422,6 +427,7 @@ main() {
     --eza) do_eza=1 ;;
     --fd) do_fd=1 ;;
     --starship) do_starship=1 ;;
+    --uv) do_uv=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h | --help)
       usage
@@ -448,6 +454,7 @@ main() {
     ["eza"]="install_eza"
     ["fd"]="install_fd"
     ["starship"]="install_starship"
+    ["uv"]="install_uv"
   )
 
   for key in "${!FEATURES[@]}"; do
