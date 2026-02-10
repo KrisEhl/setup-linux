@@ -310,6 +310,7 @@ install_essentials() {
 install_rust() {
   if need cargo; then
     log "Cargo rust already installed!"
+    rustup update stable
     return 0
   fi
 
@@ -458,13 +459,13 @@ main() {
   )
 
   for key in "${!FEATURES[@]}"; do
-      log "Checking feature: $key"
-      var="do_${key}"
-      log "do_all: $do_all, ${!var}: ${!var}"
-      if [ "$do_all" -eq 1 ] || [ "${!var}" -eq 1 ]; then
-          log "Running feature: ${FEATURES[$key]}"
-          run "${FEATURES[$key]}"
-      fi
+    log "Checking feature: $key"
+    var="do_${key}"
+    log "do_all: $do_all, ${!var}: ${!var}"
+    if [ "$do_all" -eq 1 ] || [ "${!var}" -eq 1 ]; then
+      log "Running feature: ${FEATURES[$key]}"
+      run "${FEATURES[$key]}"
+    fi
   done
 
   run add_misc_to_bashrc
