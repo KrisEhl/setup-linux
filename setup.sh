@@ -456,28 +456,30 @@ main() {
   log "Detected distro: $DISTRO"
   trap 'err "Script failed at line $LINENO"; exit 1' ERR
 
-  declare -A FEATURES=(
-    ["neovim"]="install_neovim_tar"
-    ["lazyvim"]="install_lazyvim"
-    ["fzf"]="install_fzf"
-    ["zoxide"]="install_zoxide"
-    ["rg"]="install_ripgrep"
-    ["eza"]="install_eza"
-    ["fd"]="install_fd"
-    ["starship"]="install_starship"
-    ["uv"]="install_uv"
-    ["ollama"]="install_ollama"
-  )
+  maybe_run_feature() {
+    local feature_name="$1"
+    local enabled_flag="$2"
+    local feature_cmd="$3"
+    local flag_name="do_${feature_name}"
 
-  for key in "${!FEATURES[@]}"; do
-    log "Checking feature: $key"
-    var="do_${key}"
-    log "do_all: $do_all, ${!var}: ${!var}"
-    if [ "$do_all" -eq 1 ] || [ "${!var}" -eq 1 ]; then
-      log "Running feature: ${FEATURES[$key]}"
-      run "${FEATURES[$key]}"
+    log "Checking feature: $feature_name"
+    log "do_all: $do_all, ${flag_name}: $enabled_flag"
+    if [ "$do_all" -eq 1 ] || [ "$enabled_flag" -eq 1 ]; then
+      log "Running feature: $feature_cmd"
+      run "$feature_cmd"
     fi
-  done
+  }
+
+  maybe_run_feature "neovim" "$do_neovim" "install_neovim_tar"
+  maybe_run_feature "lazyvim" "$do_lazyvim" "install_lazyvim"
+  maybe_run_feature "fzf" "$do_fzf" "install_fzf"
+  maybe_run_feature "zoxide" "$do_zoxide" "install_zoxide"
+  maybe_run_feature "rg" "$do_rg" "install_ripgrep"
+  maybe_run_feature "eza" "$do_eza" "install_eza"
+  maybe_run_feature "fd" "$do_fd" "install_fd"
+  maybe_run_feature "starship" "$do_starship" "install_starship"
+  maybe_run_feature "uv" "$do_uv" "install_uv"
+  maybe_run_feature "ollama" "$do_ollama" "install_ollama"
 
   run add_misc_to_bashrc
 
