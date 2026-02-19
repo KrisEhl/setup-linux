@@ -358,6 +358,14 @@ install_uv() {
   curl -LsSf https://astral.sh/uv/install.sh | sh
 }
 
+install_ollama() {
+  if [ "$DISTRO" = "macos" ]; then
+    echo Install App from Website https://ollama.com/download !
+  else
+    curl -fsSL https://ollama.com/install.sh | sh
+  fi  
+}
+
 add_misc_to_bashrc() {
   add_alias s "git status"
   add_alias b "git branch"
@@ -401,6 +409,7 @@ Options:
     --fd        Install fd for faster find.
     --starship  Install starship for custom user prompts.
     --uv        Install uv to manage python environments.
+    --ollama    Install ollama to run local LLMs.
     -h, --help  Show this help.
 EOF
 }
@@ -415,7 +424,7 @@ run() {
 }
 
 main() {
-  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0 do_rg=0 do_eza=0 do_fd=0 do_starship=0 do_uv=0
+  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0 do_rg=0 do_eza=0 do_fd=0 do_starship=0 do_uv=0 do_ollama=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -429,6 +438,7 @@ main() {
     --fd) do_fd=1 ;;
     --starship) do_starship=1 ;;
     --uv) do_uv=1 ;;
+    --ollama) do_ollama=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h | --help)
       usage
@@ -456,6 +466,7 @@ main() {
     ["fd"]="install_fd"
     ["starship"]="install_starship"
     ["uv"]="install_uv"
+    ["ollama"]="install_ollama"
   )
 
   for key in "${!FEATURES[@]}"; do
