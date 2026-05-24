@@ -1,4 +1,4 @@
-#!/usr/bin/env /opt/homebrew/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # =========================
@@ -16,15 +16,32 @@ if [ "$(id -u)" -eq 0 ]; then SUDO=""; fi
 # General Utility
 # =========================
 detect_distro() {
+  local kernel
+  kernel="$(uname -s 2>/dev/null || true)"
+
+  case "$kernel" in
+  Darwin) echo "macos"; return 0 ;;
+  Linux) ;;
+  *) echo "unknown"; return 0 ;;
+  esac
+
   if [ -r /etc/os-release ]; then
     . /etc/os-release
-    case "${ID,,}" in
+    local distro_id distro_like
+    distro_id="$(printf '%s' "${ID:-}" | tr '[:upper:]' '[:lower:]')"
+    distro_like="$(printf '%s' "${ID_LIKE:-}" | tr '[:upper:]' '[:lower:]')"
+
+    case "$distro_id" in
     arch | artix | endeavouros | manjaro) echo "arch" ;;
     ubuntu | debian | pop | linuxmint) echo "ubuntu" ;; # treat Debian-likes as ubuntu path
-    *) echo "unknown" ;;
+    *)
+      case " $distro_like " in
+      *" arch "*) echo "arch" ;;
+      *" debian "* | *" ubuntu "*) echo "ubuntu" ;;
+      *) echo "unknown" ;;
+      esac
+      ;;
     esac
-  elif [[ "$OSTYPE" == "darwin"* ]]; then
-    echo "macos"
   else
     echo "unknown"
   fi
@@ -39,17 +56,60 @@ pkg_update() {
   case "$DISTRO" in
   arch) $SUDO pacman -Sy --noconfirm ;;
   ubuntu) $SUDO apt-get update -y ;;
-  macos) brew update ;;
+  macos)
+    if ! need brew; then
+      err "Homebrew is required on macOS: https://brew.sh"
+      return 1
+    fi
+    brew update
+    ;;
   *) warn "Skipping pkg update (unknown distro)" ;;
   esac
 }
 
 pkg_install() {
   local pkgs=("$@")
+  local missing_pkgs=()
+
+  if [ "${#pkgs[@]}" -eq 0 ]; then
+    return 0
+  fi
+
   case "$DISTRO" in
-  arch) $SUDO pacman -S --needed --noconfirm "${pkgs[@]}" ;;
-  ubuntu) $SUDO apt-get install -y "${pkgs[@]}" ;;
-  macos) brew install "${pkgs[@]}" ;;
+  arch)
+    for pkg in "${pkgs[@]}"; do
+      pacman -Q "$pkg" >/dev/null 2>&1 || missing_pkgs+=("$pkg")
+    done
+    if [ "${#missing_pkgs[@]}" -eq 0 ]; then
+      log "Packages already installed: ${pkgs[*]}"
+      return 0
+    fi
+    $SUDO pacman -S --needed --noconfirm "${missing_pkgs[@]}"
+    ;;
+  ubuntu)
+    for pkg in "${pkgs[@]}"; do
+      dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed" || missing_pkgs+=("$pkg")
+    done
+    if [ "${#missing_pkgs[@]}" -eq 0 ]; then
+      log "Packages already installed: ${pkgs[*]}"
+      return 0
+    fi
+    $SUDO apt-get install -y "${missing_pkgs[@]}"
+    ;;
+  macos)
+    if ! need brew; then
+      err "Homebrew is required on macOS: https://brew.sh"
+      return 1
+    fi
+    for pkg in "${pkgs[@]}"; do
+      brew list "$pkg" >/dev/null 2>&1 || missing_pkgs+=("$pkg")
+    done
+    if [ "${#missing_pkgs[@]}" -eq 0 ]; then
+      log "Packages already installed: ${pkgs[*]}"
+      return 0
+    fi
+    brew install "${missing_pkgs[@]}"
+    ;;
   *) warn "Cannot install packages on unknown distro: ${pkgs[*]}" ;;
   esac
 }
@@ -198,10 +258,31 @@ ensure_basics_neovim() {
 }
 
 install_neovim_tar() {
+  if need nvim; then
+    log "Neovim already installed: $(nvim --version | head -n 1)"
+    add_alias n nvim
+    return 0
+  fi
+
   if [ "$DISTRO" = "macos" ]; then
-    local url="https://github.com/neovim/neovim/releases/download/nightly/nvim-macos-arm64.tar.gz"
-    local tarball="/tmp/nvim-macos-arm64.tar.gz"
-    local opt_dir="/opt/nvim-macos-arm64"
+    local machine
+    machine="$(uname -m)"
+    case "$machine" in
+    arm64 | aarch64)
+      local url="https://github.com/neovim/neovim/releases/download/nightly/nvim-macos-arm64.tar.gz"
+      local tarball="/tmp/nvim-macos-arm64.tar.gz"
+      local opt_dir="/opt/nvim-macos-arm64"
+      ;;
+    x86_64)
+      local url="https://github.com/neovim/neovim/releases/download/nightly/nvim-macos-x86_64.tar.gz"
+      local tarball="/tmp/nvim-macos-x86_64.tar.gz"
+      local opt_dir="/opt/nvim-macos-x86_64"
+      ;;
+    *)
+      err "Unsupported macOS architecture: $machine"
+      exit 1
+      ;;
+    esac
   else
     # https://github.com/neovim/neovim/blob/master/INSTALL.md#pre-built-archives-2
     local url="https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz"
@@ -240,7 +321,7 @@ install_neovim_tar() {
   $SUDO ln -s "$target" "$symlink"
 
   # Fallback PATH method for environments without /usr/local/bin in PATH
-  if ! log "$PATH" | grep -qE '(^|:)/usr/local/bin(:|$)'; then
+  if ! printf '%s\n' "$PATH" | grep -qE '(^|:)/usr/local/bin(:|$)'; then
     warn "/usr/local/bin not in PATH. Adding profile.d fallback."
     local prof="/etc/profile.d/nvim_path.sh"
     echo 'export PATH="/usr/local/bin:$PATH"' | $SUDO tee "$prof" >/dev/null
@@ -254,7 +335,7 @@ install_neovim_tar() {
     warn "nvim not on PATH for current shell. You may need to re-login or source your profile."
     warn "As a last resort, add to your shell rc: export PATH=\"\$PATH:$bin_dir\""
   fi
-  append_bashrc 'export PATH="$PATH:/opt/nvim-linux-x86_64/bin"'
+  append_bashrc "export PATH=\"\$PATH:$bin_dir\""
   add_alias n nvim
 }
 
@@ -265,6 +346,13 @@ install_lazyvim() {
     err "neovim couldn't be found! Required to install lazyvim!"
     exit 1
   fi
+
+  if [ -d "$HOME/.config/nvim" ]; then
+    warn "Neovim config already exists at ~/.config/nvim. Skipping LazyVim setup."
+    warn "Move or remove that directory before running --lazyvim if you want to replace it."
+    return 0
+  fi
+
   # backup of current config
   ## required
   log "Backing up neovim configs."
@@ -289,8 +377,15 @@ install_fzf() {
 }
 
 install_zoxide() {
+  if need zoxide || [ -x "$HOME/.local/bin/zoxide" ]; then
+    log "zoxide already installed."
+    append_bashrc 'eval "$(zoxide init bash)"'
+    add_alias cd z
+    return 0
+  fi
+
   # https://github.com/ajeetdsouza/zoxide?tab=readme-ov-file#installation
-  append_bashrc 'export PATH=$PATH:/home/kristian/.local/bin'
+  append_bashrc 'export PATH="$PATH:$HOME/.local/bin"'
   curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
   log "Installed zoxide."
   ~/.local/bin/zoxide init --cmd cd bash
@@ -300,8 +395,8 @@ install_zoxide() {
 
 install_essentials() {
   case "$DISTRO" in
-  arch) $sudo pacman -S --needed --noconfirm base-devel ;;
-  ubuntu) $SUDO apt-get update -y && sudo apt install -y build-essential ;;
+  arch) pkg_install base-devel ;;
+  ubuntu) pkg_update && pkg_install build-essential ;;
   macos) pkg_install gcc make ;;
   *) warn "Skipping pkg update (unknown distro)" ;;
   esac
@@ -309,8 +404,7 @@ install_essentials() {
 
 install_rust() {
   if need cargo; then
-    log "Cargo rust already installed!"
-    rustup update stable
+    log "Rust/Cargo already installed."
     return 0
   fi
 
@@ -319,6 +413,11 @@ install_rust() {
 }
 
 install_ripgrep() {
+  if need rg; then
+    log "ripgrep already installed."
+    return 0
+  fi
+
   install_rust
   git_sync_repo https://github.com/BurntSushi/ripgrep ~/.rg
   cd ~/.rg && . "$HOME/.cargo/env" && cargo build --release
@@ -334,6 +433,14 @@ install_eza_theme() {
 }
 
 install_eza() {
+  if need eza; then
+    log "eza already installed."
+    add_alias ls 'eza -lh --group-directories-first --icons=auto'
+    add_alias lt 'eza --tree --level=2 --long --icons --git'
+    install_eza_theme
+    return 0
+  fi
+
   install_rust
   cargo install eza
   add_alias ls 'eza -lh --group-directories-first --icons=auto'
@@ -344,24 +451,58 @@ install_eza() {
 }
 
 install_fd() {
+  if need fd; then
+    log "fd already installed."
+    return 0
+  fi
+
   install_rust
   cargo install fd-find
   log "Installed 'fd'."
 }
 
+install_tmux() {
+  if need tmux; then
+    log "tmux already installed."
+    return 0
+  fi
+
+  pkg_update
+  pkg_install tmux
+  log "Installed tmux."
+}
+
 install_starship() {
+  if need starship; then
+    log "starship already installed."
+    append_bashrc 'eval "$(starship init bash)"'
+    return 0
+  fi
+
   curl -sS https://starship.rs/install.sh | sh -s -- -y
   append_bashrc 'eval "$(starship init bash)"'
 }
 
 install_uv() {
+  if need uv; then
+    log "uv already installed."
+    return 0
+  fi
+
   curl -LsSf https://astral.sh/uv/install.sh | sh
 }
 
 install_ollama() {
+  if need ollama; then
+    log "ollama already installed."
+    return 0
+  fi
+
   if [ "$DISTRO" = "macos" ]; then
     echo Install App from Website https://ollama.com/download !
   else
+    pkg_update
+    pkg_install zstd
     curl -fsSL https://ollama.com/install.sh | sh
   fi  
 }
@@ -397,7 +538,7 @@ usage() {
 Usage: $0 [--all] [<App>] [--dry-run]
 
 Options:
-  --all       Run all setup steps.
+  --all       Run all setup steps (default when no app flag is given).
   --dry-run   Show what would run, without executing (best effort).
   Apps (pick any or --all)
     --neovim    Install Neovim (from tarball into /opt, create /usr/local/bin symlink).
@@ -407,6 +548,7 @@ Options:
     --rg        Install ripgrep for faster grep experience.
     --eza       Install eza for more powerful ls capabilities.
     --fd        Install fd for faster find.
+    --tmux      Install tmux terminal multiplexer.
     --starship  Install starship for custom user prompts.
     --uv        Install uv to manage python environments.
     --ollama    Install ollama to run local LLMs.
@@ -424,21 +566,23 @@ run() {
 }
 
 main() {
-  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0 do_rg=0 do_eza=0 do_fd=0 do_starship=0 do_uv=0 do_ollama=0
+  local do_all=0 do_neovim=0 do_lazyvim=0 do_fzf=0 do_zoxide=0 do_rg=0 do_eza=0 do_fd=0 do_tmux=0 do_starship=0 do_uv=0 do_ollama=0
+  local selected_count=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
-    --all) do_all=1 ;;
-    --neovim) do_neovim=1 ;;
-    --lazyvim) do_lazyvim=1 ;;
-    --fzf) do_fzf=1 ;;
-    --zoxide) do_zoxide=1 ;;
-    --rg) do_rg=1 ;;
-    --eza) do_eza=1 ;;
-    --fd) do_fd=1 ;;
-    --starship) do_starship=1 ;;
-    --uv) do_uv=1 ;;
-    --ollama) do_ollama=1 ;;
+    --all) do_all=1; selected_count=$((selected_count + 1)) ;;
+    --neovim) do_neovim=1; selected_count=$((selected_count + 1)) ;;
+    --lazyvim) do_lazyvim=1; selected_count=$((selected_count + 1)) ;;
+    --fzf) do_fzf=1; selected_count=$((selected_count + 1)) ;;
+    --zoxide) do_zoxide=1; selected_count=$((selected_count + 1)) ;;
+    --rg) do_rg=1; selected_count=$((selected_count + 1)) ;;
+    --eza) do_eza=1; selected_count=$((selected_count + 1)) ;;
+    --fd) do_fd=1; selected_count=$((selected_count + 1)) ;;
+    --tmux) do_tmux=1; selected_count=$((selected_count + 1)) ;;
+    --starship) do_starship=1; selected_count=$((selected_count + 1)) ;;
+    --uv) do_uv=1; selected_count=$((selected_count + 1)) ;;
+    --ollama) do_ollama=1; selected_count=$((selected_count + 1)) ;;
     --dry-run) DRY_RUN=1 ;;
     -h | --help)
       usage
@@ -452,6 +596,10 @@ main() {
     esac
     shift
   done
+
+  if [ "$selected_count" -eq 0 ]; then
+    do_all=1
+  fi
 
   log "Detected distro: $DISTRO"
   trap 'err "Script failed at line $LINENO"; exit 1' ERR
@@ -477,6 +625,7 @@ main() {
   maybe_run_feature "rg" "$do_rg" "install_ripgrep"
   maybe_run_feature "eza" "$do_eza" "install_eza"
   maybe_run_feature "fd" "$do_fd" "install_fd"
+  maybe_run_feature "tmux" "$do_tmux" "install_tmux"
   maybe_run_feature "starship" "$do_starship" "install_starship"
   maybe_run_feature "uv" "$do_uv" "install_uv"
   maybe_run_feature "ollama" "$do_ollama" "install_ollama"
