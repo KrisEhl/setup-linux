@@ -77,6 +77,10 @@ pkg_install() {
 
   case "$DISTRO" in
   arch)
+    if [ "$REINSTALL" -eq 1 ]; then
+      $SUDO pacman -S --noconfirm "${pkgs[@]}"
+      return 0
+    fi
     for pkg in "${pkgs[@]}"; do
       pacman -Q "$pkg" >/dev/null 2>&1 || missing_pkgs+=("$pkg")
     done
@@ -87,6 +91,10 @@ pkg_install() {
     $SUDO pacman -S --needed --noconfirm "${missing_pkgs[@]}"
     ;;
   ubuntu)
+    if [ "$REINSTALL" -eq 1 ]; then
+      $SUDO apt-get install -y --reinstall "${pkgs[@]}"
+      return 0
+    fi
     for pkg in "${pkgs[@]}"; do
       dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed" || missing_pkgs+=("$pkg")
     done
@@ -100,6 +108,16 @@ pkg_install() {
     if ! need brew; then
       err "Homebrew is required on macOS: https://brew.sh"
       return 1
+    fi
+    if [ "$REINSTALL" -eq 1 ]; then
+      for pkg in "${pkgs[@]}"; do
+        if brew list "$pkg" >/dev/null 2>&1; then
+          brew reinstall "$pkg"
+        else
+          brew install "$pkg"
+        fi
+      done
+      return 0
     fi
     for pkg in "${pkgs[@]}"; do
       brew list "$pkg" >/dev/null 2>&1 || missing_pkgs+=("$pkg")
@@ -257,11 +275,81 @@ ensure_basics_neovim() {
   fi
 }
 
+python_venv_works() {
+  local venv_dir
+  venv_dir="$(mktemp -d)"
+  if python3 -m venv "$venv_dir" >/dev/null 2>&1; then
+    rm -rf "$venv_dir"
+    return 0
+  fi
+  rm -rf "$venv_dir"
+  return 1
+}
+
+ensure_basics_lazyvim() {
+  local needed_pkgs=()
+  local python_version
+
+  case "$DISTRO" in
+  arch)
+    need git || needed_pkgs+=("git")
+    need curl || needed_pkgs+=("curl")
+    need unzip || needed_pkgs+=("unzip")
+    need tar || needed_pkgs+=("tar")
+    need gzip || needed_pkgs+=("gzip")
+    need python3 || needed_pkgs+=("python")
+    python3 -m pip --version >/dev/null 2>&1 || needed_pkgs+=("python-pip")
+    need node || needed_pkgs+=("nodejs")
+    need npm || needed_pkgs+=("npm")
+    ;;
+  ubuntu)
+    need git || needed_pkgs+=("git")
+    need curl || needed_pkgs+=("curl")
+    need unzip || needed_pkgs+=("unzip")
+    need tar || needed_pkgs+=("tar")
+    need gzip || needed_pkgs+=("gzip")
+    need python3 || needed_pkgs+=("python3")
+    python3 -m pip --version >/dev/null 2>&1 || needed_pkgs+=("python3-pip")
+    if ! python_venv_works; then
+      needed_pkgs+=("python3-venv")
+      python_version="$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))' 2>/dev/null || true)"
+      if [ -n "$python_version" ]; then
+        needed_pkgs+=("python${python_version}-venv")
+      fi
+    fi
+    need node || needed_pkgs+=("nodejs")
+    need npm || needed_pkgs+=("npm")
+    ;;
+  macos)
+    need git || needed_pkgs+=("git")
+    need curl || needed_pkgs+=("curl")
+    need unzip || needed_pkgs+=("unzip")
+    need python3 || needed_pkgs+=("python")
+    if ! need node || ! need npm; then
+      needed_pkgs+=("node")
+    fi
+    ;;
+  *)
+    warn "Skipping LazyVim prerequisite installation (unknown distro)."
+    return 0
+    ;;
+  esac
+
+  if [ "${#needed_pkgs[@]}" -gt 0 ]; then
+    log "Installing LazyVim/Mason prerequisites: ${needed_pkgs[*]}"
+    pkg_update
+    pkg_install "${needed_pkgs[@]}"
+  fi
+}
+
 install_neovim_tar() {
-  if need nvim; then
+  if need nvim && [ "$REINSTALL" -eq 0 ]; then
     log "Neovim already installed: $(nvim --version | head -n 1)"
     add_alias n nvim
     return 0
+  fi
+  if need nvim; then
+    log "Reinstalling Neovim: $(nvim --version | head -n 1)"
   fi
 
   if [ "$DISTRO" = "macos" ]; then
@@ -343,13 +431,17 @@ install_lazyvim() {
   # See https://www.lazyvim.org/installation
 
   if ! need nvim; then
-    err "neovim couldn't be found! Required to install lazyvim!"
+    err "neovim could not be found! Required to install lazyvim!"
     exit 1
   fi
 
-  if [ -d "$HOME/.config/nvim" ]; then
+  ensure_basics_lazyvim
+
+  if [ -d "$HOME/.config/nvim" ] && [ "$REINSTALL" -eq 0 ]; then
     warn "Neovim config already exists at ~/.config/nvim. Skipping LazyVim setup."
     warn "Move or remove that directory before running --lazyvim if you want to replace it."
+    configure_lazyvim_python
+    sync_lazyvim_plugins
     return 0
   fi
 
@@ -364,10 +456,100 @@ install_lazyvim() {
   log "Setting up LazyVim configs."
   git_sync_repo https://github.com/LazyVim/starter ~/.config/nvim
   rm -rf ~/.config/nvim/.git
+  configure_lazyvim_python
+  sync_lazyvim_plugins
+}
+
+sync_lazyvim_plugins() {
+  local nvim_config="$HOME/.config/nvim"
+  local lazy_file="$nvim_config/lua/config/lazy.lua"
+
+  if [ ! -f "$lazy_file" ] || ! grep -Fq 'LazyVim/LazyVim' "$lazy_file"; then
+    warn "$nvim_config does not look like a LazyVim config. Skipping plugin sync."
+    return 0
+  fi
+
+  log "Installing LazyVim plugins with lazy.nvim."
+  nvim --headless "+Lazy! sync" +qa
+}
+
+configure_lazyvim_python() {
+  local nvim_config="$HOME/.config/nvim"
+  local lazy_file="$nvim_config/lua/config/lazy.lua"
+  local plugin_file="$nvim_config/lua/plugins/lazyvim-python.lua"
+  local options_file="$nvim_config/lua/config/options.lua"
+
+  if [ ! -d "$nvim_config" ]; then
+    warn "LazyVim config not found at $nvim_config. Skipping Python LSP setup."
+    return 0
+  fi
+  if [ ! -f "$lazy_file" ] || ! grep -Fq 'LazyVim/LazyVim' "$lazy_file"; then
+    warn "$nvim_config does not look like a LazyVim config. Skipping Python LSP setup."
+    return 0
+  fi
+
+  ensure_lazyvim_extra_import "$lazy_file" "lazyvim.plugins.extras.lang.python"
+
+  if [ -f "$plugin_file" ] && grep -Fq 'lazyvim.plugins.extras.lang.python' "$plugin_file"; then
+    rm -f "$plugin_file"
+    log "Removed old Python extra import from $plugin_file."
+  elif [ -f "$plugin_file" ]; then
+    warn "$plugin_file already exists but is not the generated Python extra file. Leaving it unchanged."
+  fi
+
+  if [ -f "$options_file" ]; then
+    if ! grep -Fxq 'vim.g.lazyvim_python_lsp = "pyright"' "$options_file"; then
+      echo "" >>"$options_file"
+      echo "-- Python language tooling" >>"$options_file"
+      echo 'vim.g.lazyvim_python_lsp = "pyright"' >>"$options_file"
+      log "Configured LazyVim to use pyright for Python."
+    else
+      log "LazyVim Python LSP options already configured."
+    fi
+    if ! grep -Fxq 'vim.g.lazyvim_python_ruff = "ruff"' "$options_file"; then
+      echo 'vim.g.lazyvim_python_ruff = "ruff"' >>"$options_file"
+      log "Configured LazyVim to use ruff for Python linting and formatting."
+    fi
+  else
+    warn "Options file not found at $options_file. Python extra will use LazyVim defaults."
+  fi
+}
+
+ensure_lazyvim_extra_import() {
+  local lazy_file="$1"
+  local import_name="$2"
+  local tmp_file
+
+  if grep -Fq "$import_name" "$lazy_file"; then
+    log "LazyVim extra already enabled in $lazy_file: $import_name"
+    return 0
+  fi
+
+  tmp_file="$(mktemp)"
+  if awk -v import_name="$import_name" '
+    {
+      print
+      if (index($0, "\"LazyVim/LazyVim\"") && index($0, "import = \"lazyvim.plugins\"")) {
+        print "    { import = \"" import_name "\" },"
+        inserted = 1
+      }
+    }
+    END {
+      if (!inserted) {
+        exit 42
+      }
+    }
+  ' "$lazy_file" >"$tmp_file"; then
+    mv "$tmp_file" "$lazy_file"
+    log "Enabled LazyVim extra in $lazy_file: $import_name"
+  else
+    rm -f "$tmp_file"
+    warn "Could not insert $import_name into $lazy_file. Enable it with :LazyExtras."
+  fi
 }
 
 install_fzf() {
-  if [ -d "${HOME}/.fzf" ]; then
+  if [ -d "${HOME}/.fzf" ] && [ "$REINSTALL" -eq 0 ]; then
     warn "fzf already installed. Remove ~/.fzf to re-install!"
     return 0
   fi
@@ -377,7 +559,7 @@ install_fzf() {
 }
 
 install_zoxide() {
-  if need zoxide || [ -x "$HOME/.local/bin/zoxide" ]; then
+  if { need zoxide || [ -x "$HOME/.local/bin/zoxide" ]; } && [ "$REINSTALL" -eq 0 ]; then
     log "zoxide already installed."
     append_bashrc 'eval "$(zoxide init bash)"'
     add_alias cd z
@@ -403,8 +585,13 @@ install_essentials() {
 }
 
 install_rust() {
-  if need cargo; then
+  if need cargo && [ "$REINSTALL" -eq 0 ]; then
     log "Rust/Cargo already installed."
+    return 0
+  fi
+  if need rustup; then
+    log "Updating Rust toolchain."
+    rustup update
     return 0
   fi
 
@@ -413,7 +600,7 @@ install_rust() {
 }
 
 install_ripgrep() {
-  if need rg; then
+  if need rg && [ "$REINSTALL" -eq 0 ]; then
     log "ripgrep already installed."
     return 0
   fi
@@ -433,7 +620,7 @@ install_eza_theme() {
 }
 
 install_eza() {
-  if need eza; then
+  if need eza && [ "$REINSTALL" -eq 0 ]; then
     log "eza already installed."
     add_alias ls 'eza -lh --group-directories-first --icons=auto'
     add_alias lt 'eza --tree --level=2 --long --icons --git'
@@ -442,7 +629,7 @@ install_eza() {
   fi
 
   install_rust
-  cargo install eza
+  cargo install eza --force
   add_alias ls 'eza -lh --group-directories-first --icons=auto'
   add_alias lt 'eza --tree --level=2 --long --icons --git'
   log "Installed eza (try 'ls', 'lt')."
@@ -451,18 +638,18 @@ install_eza() {
 }
 
 install_fd() {
-  if need fd; then
+  if need fd && [ "$REINSTALL" -eq 0 ]; then
     log "fd already installed."
     return 0
   fi
 
   install_rust
-  cargo install fd-find
+  cargo install fd-find --force
   log "Installed 'fd'."
 }
 
 install_tmux() {
-  if need tmux; then
+  if need tmux && [ "$REINSTALL" -eq 0 ]; then
     log "tmux already installed."
     return 0
   fi
@@ -473,7 +660,7 @@ install_tmux() {
 }
 
 install_starship() {
-  if need starship; then
+  if need starship && [ "$REINSTALL" -eq 0 ]; then
     log "starship already installed."
     append_bashrc 'eval "$(starship init bash)"'
     return 0
@@ -484,7 +671,7 @@ install_starship() {
 }
 
 install_uv() {
-  if need uv; then
+  if need uv && [ "$REINSTALL" -eq 0 ]; then
     log "uv already installed."
     return 0
   fi
@@ -493,7 +680,7 @@ install_uv() {
 }
 
 install_ollama() {
-  if need ollama; then
+  if need ollama && [ "$REINSTALL" -eq 0 ]; then
     log "ollama already installed."
     return 0
   fi
@@ -535,11 +722,12 @@ add_misc_to_bashrc() {
 # =========================
 usage() {
   cat <<EOF
-Usage: $0 [--all] [<App>] [--dry-run]
+Usage: $0 [--all] [<App>] [--reinstall] [--dry-run]
 
 Options:
-  --all       Run all setup steps (default when no app flag is given).
-  --dry-run   Show what would run, without executing (best effort).
+  --all        Run all setup steps (default when no app flag is given).
+  --reinstall  Reinstall selected apps even when they are already present.
+  --dry-run    Show what would run, without executing (best effort).
   Apps (pick any or --all)
     --neovim    Install Neovim (from tarball into /opt, create /usr/local/bin symlink).
     --lazyvim   Install LazyVim (backups current neovim config files, before setting up lazyvim).
@@ -557,6 +745,7 @@ EOF
 }
 
 DRY_RUN=0
+REINSTALL=0
 run() {
   if [ "$DRY_RUN" -eq 1 ]; then
     printf "[DRY] %s\n" "$*"
@@ -583,6 +772,7 @@ main() {
     --starship) do_starship=1; selected_count=$((selected_count + 1)) ;;
     --uv) do_uv=1; selected_count=$((selected_count + 1)) ;;
     --ollama) do_ollama=1; selected_count=$((selected_count + 1)) ;;
+    --reinstall) REINSTALL=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h | --help)
       usage
